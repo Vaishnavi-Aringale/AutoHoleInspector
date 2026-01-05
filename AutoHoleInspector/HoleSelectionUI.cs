@@ -488,15 +488,15 @@ public class HoleSelectionUI
         double dy = Math.Abs(c2.Y - c1.Y);
         double dz = Math.Abs(c2.Z - c1.Z);
 
-        // 🔹 NX-style automatic vector selection
+        
         double pitch;
 
         if (dx >= dy && dx >= dz)
-            pitch = dx;      // X-dominant
+            pitch = dx;      // X
         else if (dy >= dx && dy >= dz)
-            pitch = dy;      // Y-dominant 
+            pitch = dy;      // Y
         else
-            pitch = dz;      // Z-dominant
+            pitch = dz;      // Z
 
         workPart.Points.DeletePoint(p1);
         workPart.Points.DeletePoint(p2);
@@ -507,9 +507,7 @@ public class HoleSelectionUI
 
    
     //x,y,z w.r.t car line
-    // ===============================
-    // X, Y, Z w.r.t. Car Line (CSYS)
-    // ===============================
+    
     //    private Vector3d GetXYZWrtCsys(Edge holeEdge, CoordinateSystem csys)
     //    {
     //        Part workPart = theSession.Parts.Work;
