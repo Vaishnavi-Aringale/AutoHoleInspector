@@ -1,4 +1,4 @@
-﻿//==============================================================================
+//==============================================================================
 //  WARNING!!  This file is overwritten by the Block UI Styler while generating
 //  the automation code. Any modifications to this file will be lost after
 //  generating the code again.
@@ -36,9 +36,13 @@
 //------------------------------------------------------------------------------
 using NXOpen;
 using NXOpen.BlockStyler;
+using NXOpen.Features;
 using NXOpen.UF;
+using NXOpen.Utilities;
 using NXOpen.VectorArithmetic;
 using System;
+using static NXOpen.Tooling.ReusablePocketBuilder;
+
 
 
 //------------------------------------------------------------------------------
@@ -54,10 +58,15 @@ public class HoleSelectionUI
     private NXOpen.BlockStyler.Group group0;
     private NXOpen.BlockStyler.SelectObject holeOneID;
     private NXOpen.BlockStyler.SelectObject holeTwoID;
+    private NXOpen.BlockStyler.SpecifyCSYS csysID;
+    private NXOpen.BlockStyler.Group group;// Block type: Group
+    private NXOpen.BlockStyler.FolderSelection folderSelectionID;// Block type: NativeFolderBrowser
+    private NXOpen.BlockStyler.Button executeID;
+
     private static UFSession theUfSession = UFSession.GetUFSession();
 
-    // Block type: Selection
-    private NXOpen.BlockStyler.SpecifyCSYS csysID;// Block type: Specify Csys
+
+
     //------------------------------------------------------------------------------
     //Bit Option for Property: SnapPointTypesEnabled
     //------------------------------------------------------------------------------
@@ -128,7 +137,7 @@ public class HoleSelectionUI
     //        1.) From where NX session is launched
     //        2.) $UGII_USER_DIR/application
     //        3.) For released applications, using UGII_CUSTOM_DIRECTORY_FILE is highly
-    //            recommended. This variable is set to a full directory path to a file 
+    //            recommended. This variable is set to a full directory path to a file
     //            containing a list of root directories for all custom applications.
     //            e.g., UGII_CUSTOM_DIRECTORY_FILE=$UGII_BASE_DIR\ugii\menus\custom_dirs.dat
     //
@@ -146,25 +155,41 @@ public class HoleSelectionUI
     //------------------------------------------------------------------------------
     public static void Main()
     {
-        HoleSelectionUI theHoleSelectionUI = null;
+        PartSelection partDlg = null;
+        HoleSelectionUI holeDlg = null;
+
         try
         {
-            theHoleSelectionUI = new HoleSelectionUI();
-            // The following method shows the dialog immediately
-            theHoleSelectionUI.Launch();
+            //partDlg = new PartSelection();
+            //NXOpen.BlockStyler.BlockDialog.DialogResponse resp =
+            //    partDlg.Launch();
+
+            //partDlg.Dispose();
+            //partDlg = null;
+
+            
+            //if (resp != NXOpen.BlockStyler.BlockDialog.DialogResponse.Ok)
+            //    return;
+
+            
+            holeDlg = new HoleSelectionUI();
+            holeDlg.Launch();
         }
         catch (Exception ex)
         {
-            //---- Enter your exception handling code here -----
-            theUI.NXMessageBox.Show("Block Styler", NXMessageBox.DialogType.Error, ex.ToString());
+            UI.GetUI().NXMessageBox.Show(
+                "Launcher Error",
+                NXMessageBox.DialogType.Error,
+                ex.ToString()
+            );
         }
         finally
         {
-            if (theHoleSelectionUI != null)
-                theHoleSelectionUI.Dispose();
-            theHoleSelectionUI = null;
+            if (holeDlg != null)
+                holeDlg.Dispose();
         }
     }
+
     //------------------------------------------------------------------------------
     // This method specifies how a shared image is unloaded from memory
     // within NX. This method gives you the capability to unload an
@@ -251,8 +276,11 @@ public class HoleSelectionUI
             group0 = (NXOpen.BlockStyler.Group)theDialog.TopBlock.FindBlock("group0");
             holeOneID = (NXOpen.BlockStyler.SelectObject)theDialog.TopBlock.FindBlock("holeOneID");
             holeTwoID = (NXOpen.BlockStyler.SelectObject)theDialog.TopBlock.FindBlock("holeTwoID");
-
             csysID = (SpecifyCSYS)theDialog.TopBlock.FindBlock("csysID");
+            group = (NXOpen.BlockStyler.Group)theDialog.TopBlock.FindBlock("group");
+            folderSelectionID = (NXOpen.BlockStyler.FolderSelection)theDialog.TopBlock.FindBlock("folderSelectionID");
+            executeID = (NXOpen.BlockStyler.Button)theDialog.TopBlock.FindBlock("executeID");
+
 
             // ===============================
             // FILTER FOR DATUM HOLE 1
@@ -298,8 +326,8 @@ public class HoleSelectionUI
 
     //------------------------------------------------------------------------------
     //Callback Name: dialogShown_cb
-    //This callback is executed just before the dialog launch. Thus any value set 
-    //here will take precedence and dialog will be launched showing that value. 
+    //This callback is executed just before the dialog launch. Thus any value set
+    //here will take precedence and dialog will be launched showing that value.
     //------------------------------------------------------------------------------
     public void dialogShown_cb()
     {
@@ -352,6 +380,14 @@ public class HoleSelectionUI
             {
                 //---------Enter your code here-----------
             }
+            else if (block == folderSelectionID)
+            {
+                //---------Enter your code here-----------
+            }
+            else if (block == executeID)
+            {
+                //---------Enter your code here-----------
+            }
         }
         catch (Exception ex)
         {
@@ -368,38 +404,59 @@ public class HoleSelectionUI
     {
         try
         {
+
+
             Edge hole1 = GetSelectedHoleEdge(holeOneID, "Datum Hole 1");
             Edge hole2 = GetSelectedHoleEdge(holeTwoID, "Datum Hole 2");
 
-            //--slection of csys
-            //PropertyList csysProps = csysID.GetProperties();
-            //TaggedObject csysObj = csysProps.GetTaggedObject("SelectedCsys");
-
-            //CoordinateSystem carLineCsys = csysObj as CoordinateSystem;
-
-            //if (carLineCsys == null)
-            //    throw new Exception("Please select a valid Datum CSYS.");
-
-
             double dia1 = GetDiameterFromCircularEdge(hole1);
             double dia2 = GetDiameterFromCircularEdge(hole2);
-            double pitch = GetPitchBetweenHoles(hole1, hole2);
-            //Vector3d xyz1 = GetXYZWrtCsys(hole1, carLineCsys);
-            //Vector3d xyz2 = GetXYZWrtCsys(hole2, carLineCsys);
+            CartesianCoordinateSystem carCsys = GetUserDefinedCsys();
+
+            GetUserCsysData(
+                carCsys,
+                out Point3d origin,
+                out Vector3d xDir,
+                out Vector3d yDir,
+                out Vector3d zDir
+            );
+
+            Point3d c1 = GetHoleCenterFromEdge(hole1);
+            Point3d c2 = GetHoleCenterFromEdge(hole2);
+
+            // pitch (CORRECT)
+            double pitch = GetPitchAlongAxis(c1, c2, yDir);
+
+            // transform points
+            Point3d h1Local = TransformToUserCsys(c1, origin, xDir, yDir, zDir);
+            Point3d h2Local = TransformToUserCsys(c2, origin, xDir, yDir, zDir);
+
+            // mutual angle (CORRECT)
+            double mutualAngle = MutualAngleAroundCarLine(h1Local, h2Local);
 
 
 
 
+
+            // ----------------------------------------
+            // 8. Result output
+            // ----------------------------------------
             theUI.NXMessageBox.Show(
-                "Hole Diameters",
+                "Hole Angle Analysis (ZX Plane)",
                 NXMessageBox.DialogType.Information,
                 $"Datum Hole 1 Diameter = {dia1:F3} mm\n" +
-                $"Datum Hole 2 Diameter = {dia2:F3} mm\n" +
-                $"Pitch Distance = {pitch:F3} mm\n\n"
-            //$"Hole 2 XYZ (Car Line) = X:{xyz2.X:F3}, Y:{xyz2.Y:F3}, Z:{xyz2.Z:F3}\n\n" +
-            //$"Hole 1 XYZ (Car Line) = X:{xyz1.X:F3}, Y:{xyz1.Y:F3}, Z:{xyz1.Z:F3}\n"
+                $"Datum Hole 2 Diameter = {dia2:F3} mm\n\n"+
+                $"Pitch Distance = {pitch:F3} mm\n\n" +
+                $"Hole-1 Center : X={c1.X:F3}, Y={c1.Y:F3}, Z={c1.Z:F3}\n" +                
+                $"Hole-2 Center : X={c2.X:F3}, Y={c2.Y:F3}, Z={c2.Z:F3}\n\n" +
+                $"Mutual Hole Angle = {mutualAngle:F3}°"
             );
+
             return 0;
+
+
+
+
         }
         catch (Exception ex)
         {
@@ -411,6 +468,72 @@ public class HoleSelectionUI
             return 1;
         }
     }
+
+
+
+    //private DatumCsys GetSelectedCsys()
+    //{
+    //    TaggedObject[] sel = csysID.GetSelectedObjects();
+
+    //    if (sel == null || sel.Length == 0)
+    //        throw new Exception("Please select a CAR line CSYS.");
+
+    //    DatumCsys csys = sel[0] as DatumCsys;
+
+    //    if (csys == null)
+    //        throw new Exception("Selected object is not a Datum CSYS.");
+
+    //    return csys;
+    //}
+
+    private CartesianCoordinateSystem GetUserDefinedCsys()
+    {
+        TaggedObject[] selected = csysID.GetSelectedObjects();
+
+        if (selected == null || selected.Length == 0)
+            throw new Exception("Please select or define CAR line CSYS.");
+
+        // Case 1: User picked a Datum CSYS
+        DatumCsys datum = selected[0] as DatumCsys;
+        if (datum != null)
+        {
+            return datum.GetEntities()[0] as CartesianCoordinateSystem;
+        }
+
+        // Case 2: User picked an existing CSYS directly
+        CartesianCoordinateSystem csys = selected[0] as CartesianCoordinateSystem;
+        if (csys != null)
+        {
+            return csys;
+        }
+
+        throw new Exception("Selected object is not a valid CSYS.");
+    }
+
+
+
+    private void GetUserCsysData(
+    CartesianCoordinateSystem csys,
+    out Point3d origin,
+    out Vector3d xDir,
+    out Vector3d yDir,
+    out Vector3d zDir)
+    {
+        origin = csys.Origin;
+        Matrix3x3 m = csys.Orientation.Element;
+
+        xDir = Normalize(new Vector3d(m.Xx, m.Xy, m.Xz));
+        yDir = Normalize(new Vector3d(m.Yx, m.Yy, m.Yz));
+        zDir = Normalize(new Vector3d(m.Zx, m.Zy, m.Zz)); // CAR line
+    }
+
+    private Vector3d Normalize(Vector3d v)
+    {
+        double mag = Math.Sqrt(v.X * v.X + v.Y * v.Y + v.Z * v.Z);
+        return new Vector3d(v.X / mag, v.Y / mag, v.Z / mag);
+    }
+
+
 
     private Edge GetSelectedHoleEdge(NXOpen.BlockStyler.SelectObject holeBlock, string holeName)
 
@@ -428,7 +551,6 @@ public class HoleSelectionUI
         return edge;
     }
 
-    //Finding Diameter
     private double GetDiameterFromCircularEdge(Edge edge)
     {
         Part workPart = theSession.Parts.Work;
@@ -465,100 +587,254 @@ public class HoleSelectionUI
 
     //Finding Pitch Distance
 
-    private double GetPitchBetweenHoles(Edge hole1, Edge hole2)
+    private double GetPitchAlongAxis(Point3d c1, Point3d c2, Vector3d axis)
     {
-        Part workPart = theSession.Parts.Work;
+        double mag = Math.Sqrt(axis.X * axis.X + axis.Y * axis.Y + axis.Z * axis.Z);
+        Vector3d unit = new Vector3d(axis.X / mag, axis.Y / mag, axis.Z / mag);
 
-        Point p1 = workPart.Points.CreatePoint(
-            hole1,
-            SmartObject.UpdateOption.AfterModeling
-        );
-        Point p2 = workPart.Points.CreatePoint(
-            hole2,
-            SmartObject.UpdateOption.AfterModeling
+        Vector3d diff = new Vector3d(
+            c2.X - c1.X,
+            c2.Y - c1.Y,
+            c2.Z - c1.Z
         );
 
-        p1.RemoveViewDependency();
-        p2.RemoveViewDependency();
-
-        Point3d c1 = p1.Coordinates;
-        Point3d c2 = p2.Coordinates;
-
-        double dx = Math.Abs(c2.X - c1.X);
-        double dy = Math.Abs(c2.Y - c1.Y);
-        double dz = Math.Abs(c2.Z - c1.Z);
-
-        
-        double pitch;
-
-        if (dx >= dy && dx >= dz)
-            pitch = dx;      // X
-        else if (dy >= dx && dy >= dz)
-            pitch = dy;      // Y
-        else
-            pitch = dz;      // Z
-
-        workPart.Points.DeletePoint(p1);
-        workPart.Points.DeletePoint(p2);
-
-        return pitch;
+        return Math.Abs(
+            diff.X * unit.X +
+            diff.Y * unit.Y +
+            diff.Z * unit.Z
+        );
     }
 
 
-   
-    //x,y,z w.r.t car line
-    
-    //    private Vector3d GetXYZWrtCsys(Edge holeEdge, CoordinateSystem csys)
-    //    {
-    //        Part workPart = theSession.Parts.Work;
-
-    //        // 1. Create hole center point
-    //        Point p = workPart.Points.CreatePoint(
-    //            holeEdge,
-    //            SmartObject.UpdateOption.AfterModeling
-    //        );
-    //        p.RemoveViewDependency();
-
-    //        Point3d holeAbs = p.Coordinates;
-
-    //        // 2. Ask CSYS origin + orientation using UF (CORRECT way)
-    //        double[] csysOrigin = new double[3];
-    //        double[] matrix = new double[9];
-
-    //        theUfSession.Csys.AskCsysInfo(
-    //    csys.Tag,
-    //    out csysOrigin,
-    //    out matrix
-    //);
-
-
-    //        // 3. Vector from CSYS origin → hole
-    //        Vector3d delta = new Vector3d(
-    //            holeAbs.X - csysOrigin[0],
-    //            holeAbs.Y - csysOrigin[1],
-    //            holeAbs.Z - csysOrigin[2]
-    //        );
-
-    //        // 4. Project into CSYS axes
-    //        double x = delta.X * matrix[0] + delta.Y * matrix[1] + delta.Z * matrix[2];
-    //        double y = delta.X * matrix[3] + delta.Y * matrix[4] + delta.Z * matrix[5];
-    //        double z = delta.X * matrix[6] + delta.Y * matrix[7] + delta.Z * matrix[8];
-
-    //        // 5. Cleanup
-    //        workPart.Points.DeletePoint(p);
-
-    //        return new Vector3d(x, y, z);
-    //    }
 
 
 
 
+    // ======================================================
+    // STEP 1: Get CSYS origin and Z direction using UFSession
+    // ======================================================
+    private void GetCsysOriginAndZDirection(
+    DatumCsys datumCsys,
+    out Point3d origin,
+    out Vector3d zDir)
+    {
+        // Get underlying coordinate system
+        CartesianCoordinateSystem csys =
+            datumCsys.GetEntities()[0] as CartesianCoordinateSystem;
+
+        if (csys == null)
+            throw new Exception("Invalid Datum CSYS selection");
+
+        origin = csys.Origin;
+
+        Matrix3x3 m = csys.Orientation.Element;
+
+        // Z-axis = CAR line
+        zDir = new Vector3d(
+            m.Zx,
+            m.Zy,
+            m.Zz
+        );
+    }
+
+    // ======================================================
+    // Get hole center X,Y,Z with respect to user-selected CSYS
+    // ======================================================
+    private Point3d GetPointInUserCsys(
+        Point3d worldPoint,
+        DatumCsys datumCsys)
+    {
+        // Get underlying coordinate system
+        CartesianCoordinateSystem csys =
+            datumCsys.GetEntities()[0] as CartesianCoordinateSystem;
+
+        if (csys == null)
+            throw new Exception("Invalid Datum CSYS");
+
+        // CSYS origin
+        Point3d o = csys.Origin;
+
+        // CSYS orientation
+        Matrix3x3 m = csys.Orientation.Element;
+
+        Vector3d xAxis = new Vector3d(m.Xx, m.Xy, m.Xz);
+        Vector3d yAxis = new Vector3d(m.Yx, m.Yy, m.Yz);
+        Vector3d zAxis = new Vector3d(m.Zx, m.Zy, m.Zz); // CAR line
+
+        // Vector from CSYS origin to point
+        Vector3d v = new Vector3d(
+            worldPoint.X - o.X,
+            worldPoint.Y - o.Y,
+            worldPoint.Z - o.Z
+        );
+
+        // Projection onto CSYS axes
+        double x = v.X * xAxis.X + v.Y * xAxis.Y + v.Z * xAxis.Z;
+        double y = v.X * yAxis.X + v.Y * yAxis.Y + v.Z * yAxis.Z;
+        double z = v.X * zAxis.X + v.Y * zAxis.Y + v.Z * zAxis.Z;
+
+        return new Point3d(x, y, z);
+    }
+
+    private double AngleWithCarLine(
+    Vector3d vec,
+    Vector3d carDir)
+    {
+        double dot =
+            vec.X * carDir.X +
+            vec.Y * carDir.Y +
+            vec.Z * carDir.Z;
+
+        double magV = Math.Sqrt(
+            vec.X * vec.X +
+            vec.Y * vec.Y +
+            vec.Z * vec.Z);
+
+        double magC = Math.Sqrt(
+            carDir.X * carDir.X +
+            carDir.Y * carDir.Y +
+            carDir.Z * carDir.Z);
+
+        double cosTheta = dot / (magV * magC);
+
+        // Clamp safety
+        cosTheta = Math.Max(-1.0, Math.Min(1.0, cosTheta));
+
+        return Math.Acos(cosTheta) * 180.0 / Math.PI;
+    }
+
+    private Point3d TransformToUserCsys(
+     Point3d worldPoint,
+     Point3d origin,
+     Vector3d xDir,
+     Vector3d yDir,
+     Vector3d zDir)
+    {
+        Vector3d d = new Vector3d(
+            worldPoint.X - origin.X,
+            worldPoint.Y - origin.Y,
+            worldPoint.Z - origin.Z
+        );
+
+        return new Point3d(
+            Dot(d, xDir),
+            Dot(d, yDir),
+            Dot(d, zDir)
+        );
+    }
+
+    private double Dot(Vector3d a, Vector3d b)
+    {
+        return a.X * b.X + a.Y * b.Y + a.Z * b.Z;
+    }
+
+
+    private double MutualAngleAroundCarLine(
+     Point3d h1Local,
+     Point3d h2Local)
+    {
+        // vectors in CAR XY plane
+        Vector3d v1 = new Vector3d(h1Local.X, h1Local.Y, 0.0);
+        Vector3d v2 = new Vector3d(h2Local.X, h2Local.Y, 0.0);
+
+        double mag1 = Math.Sqrt(v1.X * v1.X + v1.Y * v1.Y);
+        double mag2 = Math.Sqrt(v2.X * v2.X + v2.Y * v2.Y);
+
+        if (mag1 < 1e-6 || mag2 < 1e-6)
+            return 0.0;
+
+        double cos =
+            (v1.X * v2.X + v1.Y * v2.Y) / (mag1 * mag2);
+
+        cos = Math.Max(-1.0, Math.Min(1.0, cos));
+
+        return Math.Acos(cos) * 180.0 / Math.PI;
+    }
+
+
+
+
+    private Face GetCylindricalFaceFromEdge(Edge edge)
+    {
+        foreach (Face face in edge.GetFaces())
+        {
+            if (face.SolidFaceType == Face.FaceType.Cylindrical)
+                return face;
+        }
+
+        throw new Exception("No cylindrical face found for this edge");
+    }
 
 
 
 
 
-     //------------------------------------------------------------------------------
+    private Point3d GetHoleCenterFromEdge(Edge edge)
+    {
+        Part workPart = theSession.Parts.Work;
+        Unit mmUnit = workPart.UnitCollection.FindObject("MilliMeter") as Unit;
+
+        NXObject[] sel = new NXObject[] { edge };
+
+        bool isApproximate;
+        double arcLength;
+        double radius;
+        double diameter;
+        double minRadius;
+        Point3d startPoint;
+        Point3d endPoint;
+        Point3d arcCenter;
+
+        theSession.Measurement.GetArcAndCurveProperties(
+            sel,
+            mmUnit,
+            true,
+            out isApproximate,
+            out arcLength,
+            out radius,
+            out diameter,
+            out minRadius,
+            out startPoint,
+            out endPoint,
+            out arcCenter
+        );
+
+        return arcCenter;
+    }
+
+    private Vector3d GetHoleAxisFromEdge(Edge edge)
+    {
+        foreach (Face face in edge.GetFaces())
+        {
+            if (face.SolidFaceType == Face.FaceType.Cylindrical)
+            {
+                UFSession uf = UFSession.GetUFSession();
+
+                double[] origin = new double[3];
+                double[] axis = new double[3];
+                double[] radData = new double[6];
+                int type;
+
+                uf.Modl.AskFaceData(
+                    face.Tag,
+                    out type,
+                    origin,
+                    axis,
+                    radData,
+                    out _,
+                    out _,
+                    out _
+                );
+
+                return new Vector3d(axis[0], axis[1], axis[2]);
+            }
+        }
+        throw new Exception("Cylindrical face not found");
+    }
+
+
+
+    //------------------------------------------------------------------------------
     //Function Name: GetBlockProperties
     //Returns the propertylist of the specified BlockID
     //------------------------------------------------------------------------------
@@ -576,8 +852,5 @@ public class HoleSelectionUI
         }
         return plist;
     }
-
-
-
 
 }
