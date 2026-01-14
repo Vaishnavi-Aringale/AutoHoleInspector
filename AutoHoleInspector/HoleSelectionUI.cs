@@ -38,10 +38,7 @@ using NXOpen;
 using NXOpen.BlockStyler;
 using NXOpen.Features;
 using NXOpen.UF;
-using NXOpen.Utilities;
-using NXOpen.VectorArithmetic;
 using System;
-using static NXOpen.Tooling.ReusablePocketBuilder;
 
 
 
@@ -281,10 +278,7 @@ public class HoleSelectionUI
             folderSelectionID = (NXOpen.BlockStyler.FolderSelection)theDialog.TopBlock.FindBlock("folderSelectionID");
             executeID = (NXOpen.BlockStyler.Button)theDialog.TopBlock.FindBlock("executeID");
 
-
-            // ===============================
             // FILTER FOR DATUM HOLE 1
-            // ===============================
             holeOneID.ClearFilter();
 
             NXOpen.Selection.MaskTriple circularEdgeMask =
@@ -301,9 +295,8 @@ public class HoleSelectionUI
 
             holeOneID.MaximumScopeAsString = "Entire Assembly";
 
-            // ===============================
+            
             // FILTER FOR DATUM HOLE 2
-            // ===============================
             holeTwoID.ClearFilter();
 
             holeTwoID.SetSelectionFilter(
@@ -405,58 +398,53 @@ public class HoleSelectionUI
         try
         {
 
-
             Edge hole1 = GetSelectedHoleEdge(holeOneID, "Datum Hole 1");
             Edge hole2 = GetSelectedHoleEdge(holeTwoID, "Datum Hole 2");
 
             double dia1 = GetDiameterFromCircularEdge(hole1);
             double dia2 = GetDiameterFromCircularEdge(hole2);
+
+
+            // CAR CSYS
             CartesianCoordinateSystem carCsys = GetUserDefinedCsys();
+            GetUserCsysData(carCsys, out Point3d origin,
+                            out Vector3d xDir,
+                            out Vector3d yDir,
+                            out Vector3d zDir);
 
-            GetUserCsysData(
-                carCsys,
-                out Point3d origin,
-                out Vector3d xDir,
-                out Vector3d yDir,
-                out Vector3d zDir
-            );
-
+            // Hole centers
             Point3d c1 = GetHoleCenterFromEdge(hole1);
             Point3d c2 = GetHoleCenterFromEdge(hole2);
 
-            // pitch (CORRECT)
-            double pitch = GetPitchAlongAxis(c1, c2, yDir);
+            double pitch = GetPitchAlongAxis(c1,c2, yDir);
+            DatumCsys h1Csys = CreateHoleDatumCsys(c1);
+            DatumCsys h2Csys = CreateHoleDatumCsys(c2);
 
-            // transform points
-            Point3d h1Local = TransformToUserCsys(c1, origin, xDir, yDir, zDir);
-            Point3d h2Local = TransformToUserCsys(c2, origin, xDir, yDir, zDir);
+            
+            // YZ PLANE ANGLES 
+            double ref_h1 = AngleBetweenYZPlanes(carCsys, h1Csys.GetEntities()[0] as CartesianCoordinateSystem);
+            double ref_h2 = AngleBetweenYZPlanes(carCsys, h2Csys.GetEntities()[0] as CartesianCoordinateSystem);
+            double h1_h2 = AngleBetweenYZPlanes(h1Csys.GetEntities()[0] as CartesianCoordinateSystem, h2Csys.GetEntities()[0] as CartesianCoordinateSystem);
 
-            // mutual angle (CORRECT)
-            double mutualAngle = MutualAngleAroundCarLine(h1Local, h2Local);
+            ref_h1 = ToNxAlternatePlaneAngle(ref_h1);
+            ref_h2 = ToNxAlternatePlaneAngle(ref_h2);
 
-
-
-
-
-            // ----------------------------------------
+  
             // 8. Result output
-            // ----------------------------------------
             theUI.NXMessageBox.Show(
                 "Hole Angle Analysis (ZX Plane)",
                 NXMessageBox.DialogType.Information,
                 $"Datum Hole 1 Diameter = {dia1:F3} mm\n" +
-                $"Datum Hole 2 Diameter = {dia2:F3} mm\n\n"+
+                $"Datum Hole 2 Diameter = {dia2:F3} mm\n\n" +
                 $"Pitch Distance = {pitch:F3} mm\n\n" +
-                $"Hole-1 Center : X={c1.X:F3}, Y={c1.Y:F3}, Z={c1.Z:F3}\n" +                
+                $"Hole-1 Center : X={c1.X:F3}, Y={c1.Y:F3}, Z={c1.Z:F3}\n" +
                 $"Hole-2 Center : X={c2.X:F3}, Y={c2.Y:F3}, Z={c2.Z:F3}\n\n" +
-                $"Mutual Hole Angle = {mutualAngle:F3}°"
+               $"CAR → Hole-1 Angle : {ref_h1:F3}°\n" +
+                $"CAR → Hole-2 Angle : {ref_h2:F3}°\n\n" +
+                $"Hole-1 → Hole-2 Angle : {h1_h2:F3}°"
             );
 
             return 0;
-
-
-
-
         }
         catch (Exception ex)
         {
@@ -469,22 +457,142 @@ public class HoleSelectionUI
         }
     }
 
+    private double ToNxAlternatePlaneAngle(double angle360)
+    {
+        // Normalize
+        angle360 = angle360 % 360.0;
+        if (angle360 < 0)
+            angle360 += 360.0;
+
+        // Convert to 0–180
+        if (angle360 > 180.0)
+            angle360 = 360.0 - angle360;
+
+        // Prefer obtuse angle 
+        if (angle360 < 90.0)
+            angle360 = 180.0 - angle360;
+
+        return angle360;
+    }
+
+    private Vector3d GetYZPlaneNormal(CartesianCoordinateSystem csys)
+    {
+        Matrix3x3 m = csys.Orientation.Element;
+
+        // X-axis is normal of YZ plane
+        Vector3d xDir = new Vector3d(m.Xx, m.Xy, m.Xz);
+        return Normalize(xDir);
+    }
+
+    private double AngleBetweenYZPlanes(
+    CartesianCoordinateSystem refCsys,
+    CartesianCoordinateSystem targetCsys)
+    {
+        // X axis = normal of YZ plane
+        Vector3d nRef = GetYZPlaneNormal(refCsys);
+        Vector3d nTar = GetYZPlaneNormal(targetCsys);
+
+        
+        double dot =
+            nRef.X * nTar.X +
+            nRef.Y * nTar.Y +
+            nRef.Z * nTar.Z;
+
+        dot = Math.Max(-1.0, Math.Min(1.0, dot));
+
+        double angle = Math.Acos(dot) * 180.0 / Math.PI; // acute
+
+        // Cross direction
+        Vector3d cross = new Vector3d(
+            nRef.Y * nTar.Z - nRef.Z * nTar.Y,
+            nRef.Z * nTar.X - nRef.X * nTar.Z,
+            nRef.X * nTar.Y - nRef.Y * nTar.X
+        );
+
+        // Use reference Z-axis 
+        Matrix3x3 m = refCsys.Orientation.Element;
+        Vector3d refZ = new Vector3d(m.Zx, m.Zy, m.Zz);
+
+        double sign =
+            cross.X * refZ.X +
+            cross.Y * refZ.Y +
+            cross.Z * refZ.Z;
+
+        if (sign < 0)
+            angle = 360.0 - angle;
+
+        return angle;
+    }
+
+    private CartesianCoordinateSystem CreateHoleCsys(Point3d origin)
+    {
+        Part workPart = theSession.Parts.Work;
+
+        CartesianCoordinateSystem refCsys = workPart.WCS.CoordinateSystem;
+
+        Matrix3x3 m = refCsys.Orientation.Element;
+
+        Vector3d xDir = new Vector3d(m.Xx, m.Xy, m.Xz);
+        Vector3d yDir = new Vector3d(m.Yx, m.Yy, m.Yz);
+
+        Xform xform = workPart.Xforms.CreateXform(
+            origin,
+            xDir,
+            yDir,
+            SmartObject.UpdateOption.WithinModeling,
+            1.0
+        );
+
+        CartesianCoordinateSystem holeCsys =
+            workPart.CoordinateSystems.CreateCoordinateSystem(
+                xform,
+                SmartObject.UpdateOption.WithinModeling
+            );
+
+        return holeCsys;
+    }
 
 
-    //private DatumCsys GetSelectedCsys()
-    //{
-    //    TaggedObject[] sel = csysID.GetSelectedObjects();
+    private DatumCsys CreateHoleDatumCsys(Point3d origin)
+    {
+        Part workPart = theSession.Parts.Work;
 
-    //    if (sel == null || sel.Length == 0)
-    //        throw new Exception("Please select a CAR line CSYS.");
+        CartesianCoordinateSystem refCsys =
+            workPart.WCS.CoordinateSystem;
 
-    //    DatumCsys csys = sel[0] as DatumCsys;
+        Matrix3x3 m = refCsys.Orientation.Element;
 
-    //    if (csys == null)
-    //        throw new Exception("Selected object is not a Datum CSYS.");
+        Vector3d xDir = new Vector3d(m.Xx, m.Xy, m.Xz);
+        Vector3d yDir = new Vector3d(m.Yx, m.Yy, m.Yz);
 
-    //    return csys;
-    //}
+        Xform xform = workPart.Xforms.CreateXform(
+            origin,
+            xDir,
+            yDir,
+            SmartObject.UpdateOption.WithinModeling,
+            1.0
+        );
+
+        CartesianCoordinateSystem cartCsys =
+            workPart.CoordinateSystems.CreateCoordinateSystem(
+                xform,
+                SmartObject.UpdateOption.WithinModeling
+            );
+
+        DatumCsysBuilder builder =
+            workPart.Features.CreateDatumCsysBuilder(null);
+
+        builder.Csys = cartCsys;
+        builder.DisplayScaleFactor = 1.0;
+
+        DatumCsys datumCsys =
+            (DatumCsys)builder.Commit();
+
+        builder.Destroy();
+        return datumCsys;
+    }
+
+
 
     private CartesianCoordinateSystem GetUserDefinedCsys()
     {
@@ -493,14 +601,14 @@ public class HoleSelectionUI
         if (selected == null || selected.Length == 0)
             throw new Exception("Please select or define CAR line CSYS.");
 
-        // Case 1: User picked a Datum CSYS
+        //User picked a Datum CSYS
         DatumCsys datum = selected[0] as DatumCsys;
         if (datum != null)
         {
             return datum.GetEntities()[0] as CartesianCoordinateSystem;
         }
 
-        // Case 2: User picked an existing CSYS directly
+        //User picked an existing CSYS directly
         CartesianCoordinateSystem csys = selected[0] as CartesianCoordinateSystem;
         if (csys != null)
         {
@@ -509,7 +617,6 @@ public class HoleSelectionUI
 
         throw new Exception("Selected object is not a valid CSYS.");
     }
-
 
 
     private void GetUserCsysData(
@@ -534,7 +641,6 @@ public class HoleSelectionUI
     }
 
 
-
     private Edge GetSelectedHoleEdge(NXOpen.BlockStyler.SelectObject holeBlock, string holeName)
 
     {
@@ -551,6 +657,7 @@ public class HoleSelectionUI
         return edge;
     }
 
+    //Finding Diameter
     private double GetDiameterFromCircularEdge(Edge edge)
     {
         Part workPart = theSession.Parts.Work;
@@ -604,171 +711,8 @@ public class HoleSelectionUI
             diff.Z * unit.Z
         );
     }
-
-
-
-
-
-
-    // ======================================================
-    // STEP 1: Get CSYS origin and Z direction using UFSession
-    // ======================================================
-    private void GetCsysOriginAndZDirection(
-    DatumCsys datumCsys,
-    out Point3d origin,
-    out Vector3d zDir)
-    {
-        // Get underlying coordinate system
-        CartesianCoordinateSystem csys =
-            datumCsys.GetEntities()[0] as CartesianCoordinateSystem;
-
-        if (csys == null)
-            throw new Exception("Invalid Datum CSYS selection");
-
-        origin = csys.Origin;
-
-        Matrix3x3 m = csys.Orientation.Element;
-
-        // Z-axis = CAR line
-        zDir = new Vector3d(
-            m.Zx,
-            m.Zy,
-            m.Zz
-        );
-    }
-
-    // ======================================================
-    // Get hole center X,Y,Z with respect to user-selected CSYS
-    // ======================================================
-    private Point3d GetPointInUserCsys(
-        Point3d worldPoint,
-        DatumCsys datumCsys)
-    {
-        // Get underlying coordinate system
-        CartesianCoordinateSystem csys =
-            datumCsys.GetEntities()[0] as CartesianCoordinateSystem;
-
-        if (csys == null)
-            throw new Exception("Invalid Datum CSYS");
-
-        // CSYS origin
-        Point3d o = csys.Origin;
-
-        // CSYS orientation
-        Matrix3x3 m = csys.Orientation.Element;
-
-        Vector3d xAxis = new Vector3d(m.Xx, m.Xy, m.Xz);
-        Vector3d yAxis = new Vector3d(m.Yx, m.Yy, m.Yz);
-        Vector3d zAxis = new Vector3d(m.Zx, m.Zy, m.Zz); // CAR line
-
-        // Vector from CSYS origin to point
-        Vector3d v = new Vector3d(
-            worldPoint.X - o.X,
-            worldPoint.Y - o.Y,
-            worldPoint.Z - o.Z
-        );
-
-        // Projection onto CSYS axes
-        double x = v.X * xAxis.X + v.Y * xAxis.Y + v.Z * xAxis.Z;
-        double y = v.X * yAxis.X + v.Y * yAxis.Y + v.Z * yAxis.Z;
-        double z = v.X * zAxis.X + v.Y * zAxis.Y + v.Z * zAxis.Z;
-
-        return new Point3d(x, y, z);
-    }
-
-    private double AngleWithCarLine(
-    Vector3d vec,
-    Vector3d carDir)
-    {
-        double dot =
-            vec.X * carDir.X +
-            vec.Y * carDir.Y +
-            vec.Z * carDir.Z;
-
-        double magV = Math.Sqrt(
-            vec.X * vec.X +
-            vec.Y * vec.Y +
-            vec.Z * vec.Z);
-
-        double magC = Math.Sqrt(
-            carDir.X * carDir.X +
-            carDir.Y * carDir.Y +
-            carDir.Z * carDir.Z);
-
-        double cosTheta = dot / (magV * magC);
-
-        // Clamp safety
-        cosTheta = Math.Max(-1.0, Math.Min(1.0, cosTheta));
-
-        return Math.Acos(cosTheta) * 180.0 / Math.PI;
-    }
-
-    private Point3d TransformToUserCsys(
-     Point3d worldPoint,
-     Point3d origin,
-     Vector3d xDir,
-     Vector3d yDir,
-     Vector3d zDir)
-    {
-        Vector3d d = new Vector3d(
-            worldPoint.X - origin.X,
-            worldPoint.Y - origin.Y,
-            worldPoint.Z - origin.Z
-        );
-
-        return new Point3d(
-            Dot(d, xDir),
-            Dot(d, yDir),
-            Dot(d, zDir)
-        );
-    }
-
-    private double Dot(Vector3d a, Vector3d b)
-    {
-        return a.X * b.X + a.Y * b.Y + a.Z * b.Z;
-    }
-
-
-    private double MutualAngleAroundCarLine(
-     Point3d h1Local,
-     Point3d h2Local)
-    {
-        // vectors in CAR XY plane
-        Vector3d v1 = new Vector3d(h1Local.X, h1Local.Y, 0.0);
-        Vector3d v2 = new Vector3d(h2Local.X, h2Local.Y, 0.0);
-
-        double mag1 = Math.Sqrt(v1.X * v1.X + v1.Y * v1.Y);
-        double mag2 = Math.Sqrt(v2.X * v2.X + v2.Y * v2.Y);
-
-        if (mag1 < 1e-6 || mag2 < 1e-6)
-            return 0.0;
-
-        double cos =
-            (v1.X * v2.X + v1.Y * v2.Y) / (mag1 * mag2);
-
-        cos = Math.Max(-1.0, Math.Min(1.0, cos));
-
-        return Math.Acos(cos) * 180.0 / Math.PI;
-    }
-
-
-
-
-    private Face GetCylindricalFaceFromEdge(Edge edge)
-    {
-        foreach (Face face in edge.GetFaces())
-        {
-            if (face.SolidFaceType == Face.FaceType.Cylindrical)
-                return face;
-        }
-
-        throw new Exception("No cylindrical face found for this edge");
-    }
-
-
-
-
-
+   
+   
     private Point3d GetHoleCenterFromEdge(Edge edge)
     {
         Part workPart = theSession.Parts.Work;
@@ -802,37 +746,50 @@ public class HoleSelectionUI
         return arcCenter;
     }
 
-    private Vector3d GetHoleAxisFromEdge(Edge edge)
-    {
-        foreach (Face face in edge.GetFaces())
-        {
-            if (face.SolidFaceType == Face.FaceType.Cylindrical)
-            {
-                UFSession uf = UFSession.GetUFSession();
+   
+    // CSYS MAPPING 
+  
+    //private double[] MapPointToUserCsys(Point3d pt, CartesianCoordinateSystem csys)
+    //{
+    //    // CSYS origin
+    //    Point3d o = csys.Origin;
 
-                double[] origin = new double[3];
-                double[] axis = new double[3];
-                double[] radData = new double[6];
-                int type;
+    //    // CSYS orientation
+    //    Matrix3x3 m = csys.Orientation.Element;
 
-                uf.Modl.AskFaceData(
-                    face.Tag,
-                    out type,
-                    origin,
-                    axis,
-                    radData,
-                    out _,
-                    out _,
-                    out _
-                );
+    //    Vector3d xDir = Normalize(new Vector3d(m.Xx, m.Xy, m.Xz));
+    //    Vector3d yDir = Normalize(new Vector3d(m.Yx, m.Yy, m.Yz));
+    //    Vector3d zDir = Normalize(new Vector3d(m.Zx, m.Zy, m.Zz));
 
-                return new Vector3d(axis[0], axis[1], axis[2]);
-            }
-        }
-        throw new Exception("Cylindrical face not found");
-    }
+    //    // Vector from CSYS origin to point
+    //    Vector3d v = new Vector3d(
+    //        pt.X - o.X,
+    //        pt.Y - o.Y,
+    //        pt.Z - o.Z
+    //    );
+
+    //    // Projection into CSYS axes
+    //    double x = v.X * xDir.X + v.Y * xDir.Y + v.Z * xDir.Z;
+    //    double y = v.X * yDir.X + v.Y * yDir.Y + v.Z * yDir.Z;
+    //    double z = v.X * zDir.X + v.Y * zDir.Y + v.Z * zDir.Z;
+
+    //    return new double[] { x, y, z };
+    //}
 
 
+    // ANGLE CALCULATIONS
+    //private double AngleFromCsysX(double[] p)
+    //{
+    //    return Math.Atan2(p[1], p[0]) * 180.0 / Math.PI;
+    //}
+
+    //private double MutualAngle(double[] p1, double[] p2)
+    //{
+    //    double dx = p2[0] - p1[0];
+    //    double dy = p2[1] - p1[1];
+
+    //    return Math.Atan2(dy, dx) * 180.0 / Math.PI;
+    //}
 
     //------------------------------------------------------------------------------
     //Function Name: GetBlockProperties
