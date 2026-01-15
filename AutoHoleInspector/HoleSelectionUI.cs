@@ -39,6 +39,9 @@ using NXOpen.BlockStyler;
 using NXOpen.Features;
 using NXOpen.UF;
 using System;
+using System.Diagnostics;
+using System.Threading;
+using System.IO;
 
 
 
@@ -59,6 +62,7 @@ public class HoleSelectionUI
     private NXOpen.BlockStyler.Group group;// Block type: Group
     private NXOpen.BlockStyler.FolderSelection folderSelectionID;// Block type: NativeFolderBrowser
     private NXOpen.BlockStyler.Button executeID;
+    private bool executePressed = false;
 
     private static UFSession theUfSession = UFSession.GetUFSession();
 
@@ -164,11 +168,11 @@ public class HoleSelectionUI
             //partDlg.Dispose();
             //partDlg = null;
 
-            
+
             //if (resp != NXOpen.BlockStyler.BlockDialog.DialogResponse.Ok)
             //    return;
 
-            
+
             holeDlg = new HoleSelectionUI();
             holeDlg.Launch();
         }
@@ -206,8 +210,8 @@ public class HoleSelectionUI
     //------------------------------------------------------------------------------
     public static int GetUnloadOption(string arg)
     {
-        //return System.Convert.ToInt32(Session.LibraryUnloadOption.Explicitly);
-        return System.Convert.ToInt32(Session.LibraryUnloadOption.Immediately);
+        return System.Convert.ToInt32(Session.LibraryUnloadOption.Explicitly);
+        //return System.Convert.ToInt32(Session.LibraryUnloadOption.Immediately);
         // return System.Convert.ToInt32(Session.LibraryUnloadOption.AtTermination);
     }
 
@@ -295,7 +299,7 @@ public class HoleSelectionUI
 
             holeOneID.MaximumScopeAsString = "Entire Assembly";
 
-            
+
             // FILTER FOR DATUM HOLE 2
             holeTwoID.ClearFilter();
 
@@ -379,8 +383,24 @@ public class HoleSelectionUI
             }
             else if (block == executeID)
             {
-                //---------Enter your code here-----------
+                if (string.IsNullOrEmpty(folderSelectionID.Path))
+                {
+                    theUI.NXMessageBox.Show(
+                        "Error",
+                        NXMessageBox.DialogType.Error,
+                        "Please select report location."
+                    );
+                    return 0;
+                }
+
+
+                executePressed = true;
+
+
+                return ok_cb();
             }
+
+
         }
         catch (Exception ex)
         {
@@ -397,52 +417,64 @@ public class HoleSelectionUI
     {
         try
         {
-
             Edge hole1 = GetSelectedHoleEdge(holeOneID, "Datum Hole 1");
             Edge hole2 = GetSelectedHoleEdge(holeTwoID, "Datum Hole 2");
 
             double dia1 = GetDiameterFromCircularEdge(hole1);
             double dia2 = GetDiameterFromCircularEdge(hole2);
 
-
-            // CAR CSYS
             CartesianCoordinateSystem carCsys = GetUserDefinedCsys();
-            GetUserCsysData(carCsys, out Point3d origin,
-                            out Vector3d xDir,
-                            out Vector3d yDir,
-                            out Vector3d zDir);
 
-            // Hole centers
             Point3d c1 = GetHoleCenterFromEdge(hole1);
             Point3d c2 = GetHoleCenterFromEdge(hole2);
 
-            double pitch = GetPitchAlongAxis(c1,c2, yDir);
+            Vector3d pDir = new Vector3d(0.0, 1.0, 0.0);
+            double pitch = GetPitchAlongAxis(c1, c2, pDir);
+
             DatumCsys h1Csys = CreateHoleDatumCsys(c1);
             DatumCsys h2Csys = CreateHoleDatumCsys(c2);
 
+            double ref_h1 = ToNxAlternatePlaneAngle(
+                AngleBetweenYZPlanes(carCsys, h1Csys.GetEntities()[0] as CartesianCoordinateSystem));
+
+            double ref_h2 = ToNxAlternatePlaneAngle(
+                AngleBetweenYZPlanes(carCsys, h2Csys.GetEntities()[0] as CartesianCoordinateSystem));
+
+            double h1_h2 = AngleBetweenYZPlanes(
+                h1Csys.GetEntities()[0] as CartesianCoordinateSystem,
+                h2Csys.GetEntities()[0] as CartesianCoordinateSystem);
+
             
-            // YZ PLANE ANGLES 
-            double ref_h1 = AngleBetweenYZPlanes(carCsys, h1Csys.GetEntities()[0] as CartesianCoordinateSystem);
-            double ref_h2 = AngleBetweenYZPlanes(carCsys, h2Csys.GetEntities()[0] as CartesianCoordinateSystem);
-            double h1_h2 = AngleBetweenYZPlanes(h1Csys.GetEntities()[0] as CartesianCoordinateSystem, h2Csys.GetEntities()[0] as CartesianCoordinateSystem);
+            if (executePressed)
+            {
+                string csvPath = Path.Combine(folderSelectionID.Path, "Hole_Report.csv");
 
-            ref_h1 = ToNxAlternatePlaneAngle(ref_h1);
-            ref_h2 = ToNxAlternatePlaneAngle(ref_h2);
+                int partSerial = GetNextPartSerial(csvPath);
 
-  
-            // 8. Result output
-            theUI.NXMessageBox.Show(
-                "Hole Angle Analysis (ZX Plane)",
-                NXMessageBox.DialogType.Information,
-                $"Datum Hole 1 Diameter = {dia1:F3} mm\n" +
-                $"Datum Hole 2 Diameter = {dia2:F3} mm\n\n" +
-                $"Pitch Distance = {pitch:F3} mm\n\n" +
-                $"Hole-1 Center : X={c1.X:F3}, Y={c1.Y:F3}, Z={c1.Z:F3}\n" +
-                $"Hole-2 Center : X={c2.X:F3}, Y={c2.Y:F3}, Z={c2.Z:F3}\n\n" +
-               $"CAR → Hole-1 Angle : {ref_h1:F3}°\n" +
-                $"CAR → Hole-2 Angle : {ref_h2:F3}°\n\n" +
-                $"Hole-1 → Hole-2 Angle : {h1_h2:F3}°"
-            );
+                CreateCsvReport(
+                    partSerial,
+                    dia1, dia2,
+                    ref_h1, ref_h2,
+                    h1_h2,
+                    pitch,
+                    c1, c2,
+                    csvPath
+                );
+
+                if (File.Exists(csvPath))
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = csvPath,
+                        UseShellExecute = true
+                    });
+
+                    // ✅ Allow OS to start Excel before NX closes dialog
+                    System.Threading.Thread.Sleep(300);
+                }
+
+            }
+
 
             return 0;
         }
@@ -456,6 +488,7 @@ public class HoleSelectionUI
             return 1;
         }
     }
+
 
     private double ToNxAlternatePlaneAngle(double angle360)
     {
@@ -492,7 +525,7 @@ public class HoleSelectionUI
         Vector3d nRef = GetYZPlaneNormal(refCsys);
         Vector3d nTar = GetYZPlaneNormal(targetCsys);
 
-        
+
         double dot =
             nRef.X * nTar.X +
             nRef.Y * nTar.Y +
@@ -509,7 +542,7 @@ public class HoleSelectionUI
             nRef.X * nTar.Y - nRef.Y * nTar.X
         );
 
-        // Use reference Z-axis 
+        // Use reference Z-axis to decide sign
         Matrix3x3 m = refCsys.Orientation.Element;
         Vector3d refZ = new Vector3d(m.Zx, m.Zy, m.Zz);
 
@@ -711,8 +744,9 @@ public class HoleSelectionUI
             diff.Z * unit.Z
         );
     }
-   
-   
+
+
+
     private Point3d GetHoleCenterFromEdge(Edge edge)
     {
         Part workPart = theSession.Parts.Work;
@@ -746,50 +780,68 @@ public class HoleSelectionUI
         return arcCenter;
     }
 
-   
-    // CSYS MAPPING 
-  
-    //private double[] MapPointToUserCsys(Point3d pt, CartesianCoordinateSystem csys)
-    //{
-    //    // CSYS origin
-    //    Point3d o = csys.Origin;
 
-    //    // CSYS orientation
-    //    Matrix3x3 m = csys.Orientation.Element;
+    private int GetNextPartSerial(string csvPath)
+    {
+        if (!File.Exists(csvPath))
+            return 1;
 
-    //    Vector3d xDir = Normalize(new Vector3d(m.Xx, m.Xy, m.Xz));
-    //    Vector3d yDir = Normalize(new Vector3d(m.Yx, m.Yy, m.Yz));
-    //    Vector3d zDir = Normalize(new Vector3d(m.Zx, m.Zy, m.Zz));
+        int lastSerial = 0;
+        foreach (var line in File.ReadAllLines(csvPath))
+        {
+            var cols = line.Split(',');
+            if (cols.Length > 0 && int.TryParse(cols[0], out int s))
+                lastSerial = Math.Max(lastSerial, s);
+        }
+        return lastSerial + 1;
+    }
 
-    //    // Vector from CSYS origin to point
-    //    Vector3d v = new Vector3d(
-    //        pt.X - o.X,
-    //        pt.Y - o.Y,
-    //        pt.Z - o.Z
-    //    );
+    private void CreateCsvReport(
+     int partSerialNo,
+     double dia1, double dia2,
+     double carAngle1, double carAngle2,
+     double mutualAngle,
+     double pitch,
+     Point3d c1, Point3d c2,
+     string csvPath)
+    {
+        bool fileExists = File.Exists(csvPath);
 
-    //    // Projection into CSYS axes
-    //    double x = v.X * xDir.X + v.Y * xDir.Y + v.Z * xDir.Z;
-    //    double y = v.X * yDir.X + v.Y * yDir.Y + v.Z * yDir.Z;
-    //    double z = v.X * zDir.X + v.Y * zDir.Y + v.Z * zDir.Z;
+        using (StreamWriter sw = new StreamWriter(csvPath, true))
+        {
+            // ===== HEADER (only once) =====
+            if (!fileExists)
+            {
+                sw.WriteLine(
+                    "S.No,PART NUMBER,REVISION NO,PICTORIAL VIEW," +
+                    "HOLE,DIA (Ø),ANGLE WITH CAR LINE,ANGLE WITH EACH OTHER," +
+                    "PITCH,X,Y,Z,DATUM STATUS"
+                );
+            }
 
-    //    return new double[] { x, y, z };
-    //}
+            // ===== D1 ROW (Pitch printed HERE) =====
+            sw.WriteLine(
+                $"{partSerialNo},,,," +
+                $"D1,{dia1:F3}," +
+                $"{carAngle1:F3}," +
+                $"{mutualAngle:F3}," +
+                $"{pitch:F3}," +
+                $"{c1.X:F3},{c1.Y:F3},{c1.Z:F3},"
+            );
+
+            // ===== D2 ROW (Pitch EMPTY) =====
+            sw.WriteLine(
+                $",,,," +
+                $"D2,{dia2:F3}," +
+                $"{carAngle2:F3}," +
+                $"," +
+                $"," +
+                $"{c2.X:F3},{c2.Y:F3},{c2.Z:F3},"
+            );
+        }
+    }
 
 
-    // ANGLE CALCULATIONS
-    //private double AngleFromCsysX(double[] p)
-    //{
-    //    return Math.Atan2(p[1], p[0]) * 180.0 / Math.PI;
-    //}
-
-    //private double MutualAngle(double[] p1, double[] p2)
-    //{
-    //    double dx = p2[0] - p1[0];
-    //    double dy = p2[1] - p1[1];
-
-    //    return Math.Atan2(dy, dx) * 180.0 / Math.PI;
-    //}
 
     //------------------------------------------------------------------------------
     //Function Name: GetBlockProperties
